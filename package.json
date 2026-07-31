@@ -1,0 +1,16 @@
+{
+  "name": "soccorso-mare-allerta",
+  "version": "1.0.0",
+  "description": "Sistema di allerta equipaggio per associazione di soccorso in mare",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "generate-vapid": "node generate-vapid.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "web-push": "^3.6.7"
+  }
+}
