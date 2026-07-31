@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Comando — Allerta Equipaggio</title>
+<meta name="theme-color" content="#0a1929">
+<style>
+  :root {
+    --bg: #0a1929; --bg-panel: #102439; --border: #1e3a54;
+    --text: #e8f0f7; --text-dim: #7b93a8;
+    --green: #1e9e6b; --red: #c73e3e; --amber: #d98a2e;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 28px 20px calc(28px + env(safe-area-inset-bottom)); }
+  header { text-align: center; margin-bottom: 28px; }
+  header .eyebrow { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+  header h1 { font-size: 21px; margin: 0; font-weight: 600; }
+
+  .crew-panel {
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px 18px; margin-bottom: 28px;
+  }
+  .crew-panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin: 0 0 10px; }
+  .crew-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .crew-row:last-child { border-bottom: none; }
+  .crew-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-dim); display: inline-block; margin-right: 8px; }
+  .crew-dot.on { background: var(--green); }
+  .crew-empty { color: var(--text-dim); font-size: 13px; padding: 6px 0; }
+
+  .buttons { display: flex; flex-direction: column; gap: 18px; }
+  .alert-btn {
+    width: 100%; padding: 30px 20px; border-radius: 18px; border: none; cursor: pointer;
+    font-size: 20px; font-weight: 700; letter-spacing: 0.02em; color: #fff;
+    display: flex; flex-direction: column; gap: 4px; align-items: center;
+    transition: transform 0.1s;
+  }
+  .alert-btn:active { transform: scale(0.97); }
+  .alert-btn.preallerta { background: var(--amber); }
+  .alert-btn.intervento { background: var(--red); }
+  .alert-btn small { font-size: 13px; font-weight: 400; opacity: 0.9; }
+
+  .toast {
+    margin-top: 20px; padding: 14px 16px; border-radius: 10px;
+    background: var(--bg-panel); border: 1px solid var(--border);
+    font-size: 14px; text-align: center; display: none;
+  }
+  .toast.show { display: block; }
+
+  .confirm-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center; padding: 24px; z-index: 999;
+  }
+  .confirm-overlay.show { display: flex; }
+  .confirm-box {
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 16px;
+    padding: 24px; max-width: 340px; text-align: center;
+  }
+  .confirm-box h3 { margin: 0 0 8px; font-size: 18px; }
+  .confirm-box p { color: var(--text-dim); font-size: 14px; margin: 0 0 20px; }
+  .confirm-actions { display: flex; gap: 10px; }
+  .confirm-actions button {
+    flex: 1; padding: 12px; border-radius: 10px; border: none; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .confirm-cancel { background: var(--border); color: var(--text); }
+  .confirm-ok { background: var(--red); color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Soccorso in Mare</div>
+    <h1>Pannello Comandante</h1>
+  </header>
+
+  <div class="crew-panel">
+    <h2>Equipaggio in servizio</h2>
+    <div id="crewList"><div class="crew-empty">Caricamento…</div></div>
+  </div>
+
+  <div class="buttons">
+    <button id="preallertaBtn" class="alert-btn preallerta">
+      PRE-ALLERTA
+      <small>Avvisa l'equipaggio di tenersi pronto</small>
+    </button>
+    <button id="interventoBtn" class="alert-btn intervento">
+      INTERVENTO
+      <small>Chiamata immediata per intervento</small>
+    </button>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</div>
+
+<div id="confirmOverlay" class="confirm-overlay">
+  <div class="confirm-box">
+    <h3>Confermi la chiamata per intervento?</h3>
+    <p>Verrà inviato un allarme immediato a tutto l'equipaggio in servizio.</p>
+    <div class="confirm-actions">
+      <button class="confirm-cancel" id="confirmCancel">Annulla</button>
+      <button class="confirm-ok" id="confirmOk">Sì, invia</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function loadCrewStatus() {
+  try {
+    const res = await fetch('/api/crew/status');
+    const data = await res.json();
+    const list = $('crewList');
+    if (!data.members.length) {
+      list.innerHTML = '<div class="crew-empty">Nessun membro registrato</div>';
+      return;
+    }
+    list.innerHTML = data.members.map(m => `
+      <div class="crew-row">
+        <span><span class="crew-dot ${m.checkedIn ? 'on' : ''}"></span>${m.name}</span>
+        <span style="color:var(--text-dim); font-size:12px;">${m.checkedIn ? 'in servizio' : 'fuori servizio'}</span>
+      </div>
+    `).join('');
+  } catch (e) {
+    $('crewList').innerHTML = '<div class="crew-empty">Errore di connessione al server</div>';
+  }
+}
+
+function showToast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 5000);
+}
+
+async function sendAlert(type) {
+  try {
+    const res = await fetch('/api/alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type })
+    });
+    const data = await res.json();
+    if (data.warning) {
+      showToast('⚠️ ' + data.warning);
+    } else {
+      showToast(`Allerta inviata a ${data.sent} membri dell'equipaggio.`);
+    }
+    loadCrewStatus();
+  } catch (e) {
+    showToast('Errore nell\'invio. Controlla la connessione.');
+  }
+}
+
+$('preallertaBtn').addEventListener('click', () => sendAlert('preallerta'));
+
+$('interventoBtn').addEventListener('click', () => {
+  $('confirmOverlay').classList.add('show');
+});
+$('confirmCancel').addEventListener('click', () => {
+  $('confirmOverlay').classList.remove('show');
+});
+$('confirmOk').addEventListener('click', () => {
+  $('confirmOverlay').classList.remove('show');
+  sendAlert('intervento');
+});
+
+loadCrewStatus();
+setInterval(loadCrewStatus, 8000);
+</script>
+</body>
+</html>
