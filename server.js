@@ -102,6 +102,17 @@ app.get('/api/crew/status', (req, res) => {
   res.json({ members: list });
 });
 
+// Elimina un membro registrato (es. persona non più nell'associazione, o registrazione duplicata)
+app.delete('/api/crew/:memberId', (req, res) => {
+  const { memberId } = req.params;
+  if (!db.members[memberId]) {
+    return res.status(404).json({ error: 'Membro non trovato' });
+  }
+  delete db.members[memberId];
+  saveData(db);
+  res.json({ ok: true });
+});
+
 // Invio allerta: il comandante preme PRE-ALLERTA o INTERVENTO
 app.post('/api/alert', async (req, res) => {
   const { type } = req.body; // 'preallerta' | 'intervento'
