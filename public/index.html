@@ -219,19 +219,34 @@ async function sendAlert(type) {
   }
 }
 
+const ACK_TRACKING_DURATION_MS = 30 * 60 * 1000; // 30 minuti, poi il riepilogo si nasconde da solo
+
+let ackStartTime = null;
 function trackAlert(alertId, type) {
   trackedAlertId = alertId;
+  ackStartTime = Date.now();
   $('ackPanel').style.display = 'block';
   $('ackPanelTitle').textContent = `Ultimo allarme (${type === 'intervento' ? 'INTERVENTO' : 'PRE-ALLERTA'}) — riepilogo conferme`;
-  if (ackPollTimer) clearInterval(ackPollTimer);
   refreshAckStatus();
-  // Continua a controllare per 15 minuti, poi si ferma da solo
-  let elapsed = 0;
+  startAckPolling();
+}
+
+function startAckPolling() {
+  if (ackPollTimer || !trackedAlertId) return;
   ackPollTimer = setInterval(() => {
-    elapsed += 5000;
-    if (elapsed > 15 * 60 * 1000) { clearInterval(ackPollTimer); return; }
+    if (Date.now() - ackStartTime > ACK_TRACKING_DURATION_MS) { resetAckTracking(); return; }
     refreshAckStatus();
   }, 5000);
+}
+function stopAckPolling() {
+  if (ackPollTimer) { clearInterval(ackPollTimer); ackPollTimer = null; }
+}
+function resetAckTracking() {
+  stopAckPolling();
+  trackedAlertId = null;
+  ackStartTime = null;
+  $('ackPanel').style.display = 'none';
+  $('ackList').innerHTML = '';
 }
 
 async function refreshAckStatus() {
@@ -267,8 +282,37 @@ $('confirmOk').addEventListener('click', () => {
   sendAlert('intervento');
 });
 
+// I controlli periodici girano solo mentre il pannello è in primo piano, per non consumare
+// dati/batteria inutilmente quando il telefono del comandante è in tasca con lo schermo spento.
+let mainPollTimer = null;
+function startMainPolling() {
+  if (mainPollTimer) return;
+  mainPollTimer = setInterval(loadCrewStatus, 8000);
+}
+function stopMainPolling() {
+  if (mainPollTimer) { clearInterval(mainPollTimer); mainPollTimer = null; }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    loadCrewStatus();
+    startMainPolling();
+    if (trackedAlertId) {
+      if (Date.now() - ackStartTime > ACK_TRACKING_DURATION_MS) {
+        resetAckTracking();
+      } else {
+        refreshAckStatus();
+        startAckPolling();
+      }
+    }
+  } else {
+    stopMainPolling();
+    stopAckPolling();
+  }
+});
+
 loadCrewStatus();
-setInterval(loadCrewStatus, 8000);
+if (document.visibilityState === 'visible') startMainPolling();
 </script>
 </body>
 </html>
