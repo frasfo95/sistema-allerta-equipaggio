@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Allerta Equipaggio</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a1929">
+<style>
+  :root {
+    --bg: #0a1929;
+    --bg-panel: #102439;
+    --border: #1e3a54;
+    --text: #e8f0f7;
+    --text-dim: #7b93a8;
+    --green: #1e9e6b;
+    --green-dim: #143d2c;
+    --red: #c73e3e;
+    --amber: #d98a2e;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap {
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+    padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+  }
+  header { text-align: center; margin-bottom: 24px; }
+  header .eyebrow {
+    font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 6px;
+  }
+  header h1 { font-size: 20px; margin: 0; font-weight: 600; }
+
+  .setup {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px; margin-bottom: 16px;
+  }
+  .setup label { display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 8px; }
+  .setup input {
+    width: 100%; padding: 14px; font-size: 16px; border-radius: 10px;
+    border: 1px solid var(--border); background: #0d1f33; color: var(--text);
+  }
+  .setup button {
+    margin-top: 12px; width: 100%; padding: 14px; font-size: 15px; font-weight: 600;
+    border-radius: 10px; border: none; background: #2563eb; color: white; cursor: pointer;
+  }
+  #codeInput { text-align: center; font-size: 28px; letter-spacing: 0.3em; }
+
+  .status-card {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 24px;
+  }
+  .status-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--text-dim);
+  }
+  .status-dot.on { background: var(--green); box-shadow: 0 0 12px var(--green); }
+  .status-label { font-size: 14px; color: var(--text-dim); text-align: center; }
+  .status-label strong { color: var(--text); display: block; font-size: 17px; margin-top: 4px; }
+
+  .toggle-btn {
+    width: 100%; max-width: 320px; padding: 26px; border-radius: 18px;
+    font-size: 19px; font-weight: 700; letter-spacing: 0.02em;
+    border: none; cursor: pointer; transition: transform 0.1s;
+  }
+  .toggle-btn:active { transform: scale(0.97); }
+  .toggle-btn.checkin { background: var(--green); color: #fff; }
+  .toggle-btn.checkout { background: var(--red); color: #fff; }
+
+  .hint { font-size: 12px; color: var(--text-dim); text-align: center; max-width: 300px; }
+
+  .banner {
+    position: fixed; inset: 0; z-index: 999;
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    gap: 16px; text-align: center; padding: 30px;
+  }
+  .banner.intervento { background: var(--red); }
+  .banner.preallerta { background: var(--amber); }
+  .banner.show { display: flex; animation: flash 0.6s infinite; }
+  @keyframes flash { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.4); } }
+  .banner h2 { font-size: 30px; margin: 0; color: #fff; }
+  .banner p { font-size: 16px; color: #fff; margin: 0; }
+  .banner button {
+    margin-top: 20px; padding: 14px 28px; border-radius: 10px; border: none;
+    background: rgba(0,0,0,0.35); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .ack-btn {
+    background: #fff !important; color: #0a1929 !important; font-size: 17px !important;
+    padding: 16px 36px !important;
+  }
+
+  .badge {
+    font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    background: var(--bg-panel); border: 1px solid var(--border); color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Soccorso in Mare</div>
+    <h1>Allerta Equipaggio</h1>
+  </header>
+
+  <div id="setup" class="setup">
+    <div id="setupChoice">
+      <p style="margin:0 0 14px; font-size:14px; color:var(--text-dim);">Prima di iniziare, dicci chi sei:</p>
+      <button id="newUserBtn">Sono nuovo/a in equipaggio</button>
+      <button id="existingUserBtn" style="background:#1e3a54; margin-top:10px;">Ho già un codice personale</button>
+    </div>
+
+    <div id="newUserForm" style="display:none;">
+      <label for="nameInput">Nome / nominativo</label>
+      <input id="nameInput" type="text" placeholder="Es. Mario Rossi" autocomplete="off">
+      <label for="codeInputNew" style="margin-top:14px;">Il tuo codice a 4 cifre</label>
+      <input id="codeInputNew" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Es. 1503" autocomplete="off">
+      <button id="saveNameBtn">Registrami</button>
+      <button id="backFromNewBtn" style="background:transparent; color:var(--text-dim); margin-top:6px;">Indietro</button>
+    </div>
+
+    <div id="existingUserForm" style="display:none;">
+      <label for="codeInputExisting">Il tuo codice a 4 cifre</label>
+      <input id="codeInputExisting" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Es. 1503" autocomplete="off">
+      <button id="loginCodeBtn">Accedi</button>
+      <button id="backFromExistingBtn" style="background:transparent; color:var(--text-dim); margin-top:6px;">Indietro</button>
+    </div>
+  </div>
+
+  <div id="statusCard" class="status-card" style="display:none;">
+    <span id="permBadge" class="badge">Notifiche: da attivare</span>
+    <div>
+      <div style="display:flex; align-items:center; gap:8px; justify-content:center;">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusText" class="status-label"></span>
+      </div>
+    </div>
+    <button id="toggleBtn" class="toggle-btn checkin">INIZIA TURNO (CHECK-IN)</button>
+    <p class="hint">Fai check-in solo quando sei effettivamente in servizio: da questo momento riceverai le allerte del comandante, anche ad app chiusa. Fai check-out a fine turno.</p>
+  </div>
+</div>
+
+<div id="banner" class="banner">
+  <h2 id="bannerTitle"></h2>
+  <p id="bannerBody"></p>
+  <button id="ackBtn" class="ack-btn">✓ HO RICEVUTO</button>
+  <button id="dismissBtn">Chiudi senza confermare</button>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+let memberId = localStorage.getItem('memberId');
+let memberName = localStorage.getItem('memberName');
+let memberCode = localStorage.getItem('memberCode');
+let checkedIn = localStorage.getItem('checkedIn') === 'true';
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function registerServiceWorkerAndSubscribe() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    $('permBadge').textContent = 'Push non supportato su questo browser';
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    $('permBadge').textContent = 'Notifiche negate — attivale nelle impostazioni';
+    return;
+  }
+
+  const { publicKey } = await fetch('/api/vapid-public-key').then(r => r.json());
+
+  let subscription = await reg.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey)
+    });
+  }
+
+  await fetch('/api/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId, subscription })
+  });
+
+  $('permBadge').textContent = 'Notifiche attive ✓';
+}
+
+function renderStatus() {
+  $('statusDot').classList.toggle('on', checkedIn);
+  $('statusText').innerHTML = checkedIn
+    ? 'IN SERVIZIO <strong>' + memberName + '</strong>'
+    : 'FUORI SERVIZIO <strong>' + memberName + '</strong>';
+  $('toggleBtn').textContent = checkedIn ? 'TERMINA TURNO (CHECK-OUT)' : 'INIZIA TURNO (CHECK-IN)';
+  $('toggleBtn').className = 'toggle-btn ' + (checkedIn ? 'checkout' : 'checkin');
+}
+
+function goToStatusCard() {
+  $('setup').style.display = 'none';
+  $('statusCard').style.display = 'flex';
+  renderStatus();
+}
+
+async function init() {
+  if (memberId && memberName) {
+    goToStatusCard();
+    await registerServiceWorkerAndSubscribe();
+  }
+}
+
+// --- Schermata di scelta iniziale ---
+$('newUserBtn').addEventListener('click', () => {
+  $('setupChoice').style.display = 'none';
+  $('newUserForm').style.display = 'block';
+});
+$('existingUserBtn').addEventListener('click', () => {
+  $('setupChoice').style.display = 'none';
+  $('existingUserForm').style.display = 'block';
+});
+$('backFromNewBtn').addEventListener('click', () => {
+  $('newUserForm').style.display = 'none';
+  $('setupChoice').style.display = 'block';
+});
+$('backFromExistingBtn').addEventListener('click', () => {
+  $('existingUserForm').style.display = 'none';
+  $('setupChoice').style.display = 'block';
+});
+
+// --- Nuovo membro: crea l'account con il codice a 4 cifre concordato ---
+$('saveNameBtn').addEventListener('click', async () => {
+  const name = $('nameInput').value.trim();
+  const code = $('codeInputNew').value.trim();
+  if (!name) { alert('Inserisci il tuo nome.'); return; }
+  if (!/^\d{4}$/.test(code)) { alert('Inserisci le 4 cifre del tuo codice.'); return; }
+
+  $('saveNameBtn').disabled = true;
+  try {
+    const res = await fetch('/api/member/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, code })
+    });
+    const data = await res.json();
+    if (!data.ok) { alert(data.error || 'Errore, riprova.'); $('saveNameBtn').disabled = false; return; }
+
+    memberId = data.memberId;
+    memberName = data.name;
+    memberCode = data.code;
+    localStorage.setItem('memberId', memberId);
+    localStorage.setItem('memberName', memberName);
+    localStorage.setItem('memberCode', memberCode);
+
+    goToStatusCard();
+    await registerServiceWorkerAndSubscribe();
+  } catch (e) {
+    alert('Errore di connessione. Riprova.');
+  }
+  $('saveNameBtn').disabled = false;
+});
+
+// --- Membro esistente: accede da un nuovo telefono con il proprio codice a 4 cifre ---
+$('loginCodeBtn').addEventListener('click', async () => {
+  const code = $('codeInputExisting').value.trim();
+  if (!/^\d{4}$/.test(code)) { alert('Inserisci le 4 cifre del tuo codice.'); return; }
+
+  $('loginCodeBtn').disabled = true;
+  try {
+    const res = await fetch('/api/member/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json();
+    if (!data.ok) { alert(data.error || 'Codice non trovato.'); $('loginCodeBtn').disabled = false; return; }
+
+    memberId = data.memberId;
+    memberName = data.name;
+    memberCode = data.code;
+    localStorage.setItem('memberId', memberId);
+    localStorage.setItem('memberName', memberName);
+    localStorage.setItem('memberCode', memberCode);
+
+    goToStatusCard();
+    await registerServiceWorkerAndSubscribe();
+  } catch (e) {
+    alert('Errore di connessione. Riprova.');
+  }
+  $('loginCodeBtn').disabled = false;
+});
+
+$('toggleBtn').addEventListener('click', async () => {
+  const endpoint = checkedIn ? '/api/checkout' : '/api/checkin';
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId })
+  });
+  const data = await res.json();
+  if (data.ok) {
+    checkedIn = data.checkedIn;
+    localStorage.setItem('checkedIn', checkedIn);
+    renderStatus();
+  } else {
+    alert(data.error || 'Errore, riprova.');
+  }
+});
+
+// --- Allarme in primo piano: suono generato (nessun file audio necessario) + banner lampeggiante ---
+let audioCtx;
+let currentAlertId = null;
+let lastKnownAlertId = null;
+
+function playAlarm(urgency) {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  const beeps = urgency === 'intervento' ? 6 : 3;
+  const gap = 350;
+  for (let i = 0; i < beeps; i++) {
+    setTimeout(() => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = urgency === 'intervento' ? 880 : 660;
+      osc.type = 'square';
+      gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.25);
+    }, i * gap);
+  }
+}
+
+function showBanner(data, playSound) {
+  currentAlertId = data.alertId;
+  lastKnownAlertId = data.alertId;
+  $('bannerTitle').textContent = data.title;
+  $('bannerBody').textContent = data.body;
+  const banner = $('banner');
+  banner.className = 'banner show ' + (data.urgency === 'intervento' ? 'intervento' : 'preallerta');
+  if (playSound) playAlarm(data.urgency);
+}
+
+async function ackCurrentAlert() {
+  if (!currentAlertId) return;
+  try {
+    await fetch(`/api/alert/${currentAlertId}/ack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId, name: memberName })
+    });
+  } catch (e) { /* verrà ritentato al prossimo controllo se serve */ }
+  $('banner').className = 'banner';
+}
+
+$('ackBtn').addEventListener('click', ackCurrentAlert);
+$('dismissBtn').addEventListener('click', () => {
+  $('banner').className = 'banner'; // chiude senza confermare: ricomparirà alla riapertura se ancora non confermato
+});
+
+// Controlla se c'è un allarme recente non ancora confermato da questo membro
+// (copre il caso in cui l'app venga aperta dopo la notifica, o la notifica sia stata persa)
+async function checkLatestAlert() {
+  if (!memberId) return;
+  try {
+    const res = await fetch('/api/alert/latest');
+    const { alert } = await res.json();
+    if (!alert) return;
+    const isRecipient = alert.recipients.some(r => r.memberId === memberId);
+    const alreadyAcked = alert.acked.some(a => a.memberId === memberId);
+    const isRecent = (Date.now() - new Date(alert.createdAt).getTime()) < 30 * 60 * 1000;
+    if (isRecipient && isRecent && !alreadyAcked && alert._id !== lastKnownAlertId) {
+      showBanner({ alertId: alert._id, title: alert.title, body: alert.body, urgency: alert.type }, true);
+    }
+  } catch (e) { /* riprova al prossimo controllo */ }
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data?.type === 'ALERT') {
+      showBanner(event.data.data, true);
+    }
+  });
+}
+
+init().then(() => {
+  checkLatestAlert();
+  setInterval(checkLatestAlert, 15000);
+});
+</script>
+</body>
+</html>
