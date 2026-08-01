@@ -88,6 +88,10 @@
     margin-top: 20px; padding: 14px 28px; border-radius: 10px; border: none;
     background: rgba(0,0,0,0.35); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
   }
+  .ack-btn {
+    background: #fff !important; color: #0a1929 !important; font-size: 17px !important;
+    padding: 16px 36px !important;
+  }
 
   .badge {
     font-size: 11px; padding: 4px 10px; border-radius: 999px;
@@ -125,7 +129,8 @@
 <div id="banner" class="banner">
   <h2 id="bannerTitle"></h2>
   <p id="bannerBody"></p>
-  <button id="dismissBtn">Ho ricevuto — chiudi</button>
+  <button id="ackBtn" class="ack-btn">✓ HO RICEVUTO</button>
+  <button id="dismissBtn">Chiudi senza confermare</button>
 </div>
 
 <script>
@@ -233,6 +238,9 @@ $('toggleBtn').addEventListener('click', async () => {
 
 // --- Allarme in primo piano: suono generato (nessun file audio necessario) + banner lampeggiante ---
 let audioCtx;
+let currentAlertId = null;
+let lastKnownAlertId = null;
+
 function playAlarm(urgency) {
   audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
   const beeps = urgency === 'intervento' ? 6 : 3;
@@ -251,27 +259,62 @@ function playAlarm(urgency) {
   }
 }
 
-function showBanner(data) {
+function showBanner(data, playSound) {
+  currentAlertId = data.alertId;
+  lastKnownAlertId = data.alertId;
   $('bannerTitle').textContent = data.title;
   $('bannerBody').textContent = data.body;
   const banner = $('banner');
   banner.className = 'banner show ' + (data.urgency === 'intervento' ? 'intervento' : 'preallerta');
-  playAlarm(data.urgency);
+  if (playSound) playAlarm(data.urgency);
 }
 
-$('dismissBtn').addEventListener('click', () => {
+async function ackCurrentAlert() {
+  if (!currentAlertId) return;
+  try {
+    await fetch(`/api/alert/${currentAlertId}/ack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId, name: memberName })
+    });
+  } catch (e) { /* verrà ritentato al prossimo controllo se serve */ }
   $('banner').className = 'banner';
+}
+
+$('ackBtn').addEventListener('click', ackCurrentAlert);
+$('dismissBtn').addEventListener('click', () => {
+  $('banner').className = 'banner'; // chiude senza confermare: ricomparirà alla riapertura se ancora non confermato
 });
+
+// Controlla se c'è un allarme recente non ancora confermato da questo membro
+// (copre il caso in cui l'app venga aperta dopo la notifica, o la notifica sia stata persa)
+async function checkLatestAlert() {
+  if (!memberId) return;
+  try {
+    const res = await fetch('/api/alert/latest');
+    const { alert } = await res.json();
+    if (!alert) return;
+    const isRecipient = alert.recipients.some(r => r.memberId === memberId);
+    const alreadyAcked = alert.acked.some(a => a.memberId === memberId);
+    const isRecent = (Date.now() - new Date(alert.createdAt).getTime()) < 30 * 60 * 1000;
+    if (isRecipient && isRecent && !alreadyAcked && alert._id !== lastKnownAlertId) {
+      showBanner({ alertId: alert._id, title: alert.title, body: alert.body, urgency: alert.type }, true);
+    }
+  } catch (e) { /* riprova al prossimo controllo */ }
+}
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', (event) => {
     if (event.data?.type === 'ALERT') {
-      showBanner(event.data.data);
+      showBanner(event.data.data, true);
     }
   });
 }
 
-init();
+init().then(() => {
+  checkLatestAlert();
+  setInterval(checkLatestAlert, 15000);
+});
 </script>
 </body>
 </html>

@@ -32,6 +32,10 @@
   .crew-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-dim); display: inline-block; margin-right: 8px; }
   .crew-dot.on { background: var(--green); }
   .crew-empty { color: var(--text-dim); font-size: 13px; padding: 6px 0; }
+  .ack-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .ack-row:last-child { border-bottom: none; }
+  .ack-yes { color: var(--green); font-size: 12px; font-weight: 600; }
+  .ack-no { color: var(--text-dim); font-size: 12px; }
   .del-btn {
     background: transparent; border: 1px solid var(--red); color: var(--red);
     font-size: 12px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
@@ -106,6 +110,11 @@
       INTERVENTO
       <small>Chiamata immediata per intervento</small>
     </button>
+  </div>
+
+  <div id="ackPanel" class="crew-panel" style="display:none;">
+    <h2 id="ackPanelTitle">Ultimo allarme — riepilogo conferme</h2>
+    <div id="ackList"></div>
   </div>
 
   <div id="toast" class="toast"></div>
@@ -187,6 +196,9 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 5000);
 }
 
+let trackedAlertId = null;
+let ackPollTimer = null;
+
 async function sendAlert(type) {
   try {
     const res = await fetch('/api/alert', {
@@ -199,11 +211,47 @@ async function sendAlert(type) {
       showToast('⚠️ ' + data.warning);
     } else {
       showToast(`Allerta inviata a ${data.sent} membri dell'equipaggio.`);
+      trackAlert(data.alertId, type);
     }
     loadCrewStatus();
   } catch (e) {
     showToast('Errore nell\'invio. Controlla la connessione.');
   }
+}
+
+function trackAlert(alertId, type) {
+  trackedAlertId = alertId;
+  $('ackPanel').style.display = 'block';
+  $('ackPanelTitle').textContent = `Ultimo allarme (${type === 'intervento' ? 'INTERVENTO' : 'PRE-ALLERTA'}) — riepilogo conferme`;
+  if (ackPollTimer) clearInterval(ackPollTimer);
+  refreshAckStatus();
+  // Continua a controllare per 15 minuti, poi si ferma da solo
+  let elapsed = 0;
+  ackPollTimer = setInterval(() => {
+    elapsed += 5000;
+    if (elapsed > 15 * 60 * 1000) { clearInterval(ackPollTimer); return; }
+    refreshAckStatus();
+  }, 5000);
+}
+
+async function refreshAckStatus() {
+  if (!trackedAlertId) return;
+  try {
+    const res = await fetch('/api/alert/' + trackedAlertId);
+    const { alert } = await res.json();
+    if (!alert) return;
+    const ackedIds = new Set(alert.acked.map(a => a.memberId));
+    if (!alert.recipients.length) {
+      $('ackList').innerHTML = '<div class="crew-empty">Nessun destinatario per questo allarme</div>';
+      return;
+    }
+    $('ackList').innerHTML = alert.recipients.map(r => `
+      <div class="ack-row">
+        <span>${r.name}</span>
+        ${ackedIds.has(r.memberId) ? '<span class="ack-yes">✓ RICEVUTO</span>' : '<span class="ack-no">in attesa…</span>'}
+      </div>
+    `).join('');
+  } catch (e) { /* riprova al prossimo giro */ }
 }
 
 $('preallertaBtn').addEventListener('click', () => sendAlert('preallerta'));
