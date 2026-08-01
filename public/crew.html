@@ -303,7 +303,26 @@ $('loginCodeBtn').addEventListener('click', async () => {
   $('loginCodeBtn').disabled = false;
 });
 
+function forgetDeviceAndShowLogin() {
+  localStorage.removeItem('memberId');
+  localStorage.removeItem('memberName');
+  localStorage.removeItem('memberCode');
+  localStorage.removeItem('checkedIn');
+  memberId = null;
+  memberName = null;
+  memberCode = null;
+  checkedIn = false;
+
+  $('statusCard').style.display = 'none';
+  $('setup').style.display = 'block';
+  $('setupChoice').style.display = 'none';
+  $('newUserForm').style.display = 'none';
+  $('codeInputExisting').value = '';
+  $('existingUserForm').style.display = 'block';
+}
+
 $('toggleBtn').addEventListener('click', async () => {
+  const wasCheckedIn = checkedIn;
   const endpoint = checkedIn ? '/api/checkout' : '/api/checkin';
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -313,8 +332,13 @@ $('toggleBtn').addEventListener('click', async () => {
   const data = await res.json();
   if (data.ok) {
     checkedIn = data.checkedIn;
-    localStorage.setItem('checkedIn', checkedIn);
-    renderStatus();
+    if (wasCheckedIn && !checkedIn) {
+      // Check-out avvenuto: richiedi di nuovo il codice al prossimo accesso da questo dispositivo
+      forgetDeviceAndShowLogin();
+    } else {
+      localStorage.setItem('checkedIn', checkedIn);
+      renderStatus();
+    }
   } else {
     alert(data.error || 'Errore, riprova.');
   }
