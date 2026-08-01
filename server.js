@@ -170,15 +170,15 @@ app.post('/api/alert/:id/ack', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/alert/latest', async (req, res) => {
+  const alert = await Alert.findOne().sort({ createdAt: -1 }).lean();
+  res.json({ alert: alert || null });
+});
+
 app.get('/api/alert/:id', async (req, res) => {
   const alert = await Alert.findById(req.params.id).lean();
   if (!alert) return res.status(404).json({ error: 'Allarme non trovato' });
   res.json({ alert });
-});
-
-app.get('/api/alert/latest', async (req, res) => {
-  const alert = await Alert.findOne().sort({ createdAt: -1 }).lean();
-  res.json({ alert: alert || null });
 });
 
 app.listen(PORT, () => {
