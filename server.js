@@ -25,7 +25,8 @@ mongoose.connect(MONGODB_URI)
 const memberSchema = new mongoose.Schema({
   memberId: { type: String, unique: true, required: true },
   name: { type: String, required: true },
-  subscription: { type: Object, required: true },
+  code: { type: String, unique: true, required: true }, // codice personale a 4 cifre
+  subscription: { type: Object, default: null },
   checkedIn: { type: Boolean, default: false },
   lastUpdate: { type: Date, default: Date.now }
 });
@@ -61,16 +62,51 @@ app.get('/api/vapid-public-key', (req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
+// Crea un nuovo membro dell'equipaggio con il codice a 4 cifre fornito direttamente
+app.post('/api/member/new', async (req, res) => {
+  const { name, code } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Il nome è obbligatorio' });
+  }
+  if (!/^\d{4}$/.test(String(code || '').trim())) {
+    return res.status(400).json({ error: 'Il codice deve essere di 4 cifre' });
+  }
+  const cleanCode = String(code).trim();
+  try {
+    if (await Member.exists({ code: cleanCode })) {
+      return res.status(409).json({ error: 'Questo codice è già in uso da un altro membro. Sceglietene uno diverso.' });
+    }
+    const memberId = new mongoose.Types.ObjectId().toString();
+    await Member.create({ memberId, name: name.trim(), code: cleanCode });
+    res.json({ ok: true, memberId, code: cleanCode, name: name.trim() });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Errore durante la creazione' });
+  }
+});
+
+// Ritrova un membro già registrato tramite il suo codice a 4 cifre (es. da un nuovo telefono)
+app.post('/api/member/lookup', async (req, res) => {
+  const { code } = req.body;
+  if (!/^\d{4}$/.test(String(code || '').trim())) {
+    return res.status(400).json({ error: 'Il codice deve essere di 4 cifre' });
+  }
+  const member = await Member.findOne({ code: String(code).trim() });
+  if (!member) return res.status(404).json({ error: 'Nessun membro trovato con questo codice' });
+  res.json({ ok: true, memberId: member.memberId, name: member.name, code: member.code });
+});
+
+// Collega (o aggiorna) la sottoscrizione alle notifiche push per un membro già esistente
 app.post('/api/register', async (req, res) => {
-  const { memberId, name, subscription } = req.body;
+  const { memberId, subscription } = req.body;
   if (!memberId || !subscription) {
     return res.status(400).json({ error: 'memberId e subscription sono obbligatori' });
   }
-  await Member.findOneAndUpdate(
+  const member = await Member.findOneAndUpdate(
     { memberId },
-    { memberId, name: name || memberId, subscription, lastUpdate: new Date() },
-    { upsert: true, setDefaultsOnInsert: true }
+    { subscription, lastUpdate: new Date() },
+    { new: true }
   );
+  if (!member) return res.status(404).json({ error: 'Membro non trovato' });
   res.json({ ok: true });
 });
 
