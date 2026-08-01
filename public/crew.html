@@ -167,6 +167,23 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
+// Piccolo magazzino locale (IndexedDB), leggibile anche dal Service Worker in background:
+// gli permette di rinnovare da solo la sottoscrizione alle notifiche se il telefono la invalida.
+function idbSaveMemberId(id) {
+  return new Promise((resolve) => {
+    const req = indexedDB.open('soccorso-mare', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => {
+      const tx = req.result.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(id, 'memberId');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    };
+    req.onerror = () => resolve();
+  });
+}
+function idbClearMemberId() { return idbSaveMemberId(null); }
+
 async function registerServiceWorkerAndSubscribe() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     $('permBadge').textContent = 'Push non supportato su questo browser';
@@ -197,6 +214,7 @@ async function registerServiceWorkerAndSubscribe() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ memberId, subscription })
   });
+  await idbSaveMemberId(memberId);
 
   $('permBadge').textContent = 'Notifiche attive ✓';
 }
@@ -308,6 +326,7 @@ function forgetDeviceAndShowLogin() {
   localStorage.removeItem('memberName');
   localStorage.removeItem('memberCode');
   localStorage.removeItem('checkedIn');
+  idbClearMemberId();
   memberId = null;
   memberName = null;
   memberCode = null;
@@ -419,9 +438,29 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// Il controllo periodico gira solo mentre la pagina è visibile in primo piano: quando è in
+// background (schermo spento, altra app aperta) si mette in pausa da solo, per non consumare
+// batteria e dati inutilmente. Le notifiche push continuano comunque ad arrivare in ogni caso.
+let pollTimer = null;
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(checkLatestAlert, 15000);
+}
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    checkLatestAlert();
+    startPolling();
+  } else {
+    stopPolling();
+  }
+});
+
 init().then(() => {
   checkLatestAlert();
-  setInterval(checkLatestAlert, 15000);
+  if (document.visibilityState === 'visible') startPolling();
 });
 </script>
 </body>
