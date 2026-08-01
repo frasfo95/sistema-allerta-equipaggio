@@ -74,6 +74,20 @@
 
   .hint { font-size: 12px; color: var(--text-dim); text-align: center; max-width: 300px; }
 
+  .on-duty-panel {
+    width: 100%; max-width: 320px; background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 16px; margin-top: 6px;
+  }
+  .on-duty-panel h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim);
+    margin: 0 0 10px;
+  }
+  .on-duty-row { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .on-duty-row:last-child { border-bottom: none; }
+  .on-duty-row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 9px; flex-shrink: 0; }
+  .on-duty-empty { color: var(--text-dim); font-size: 13px; padding: 4px 0; }
+  .on-duty-you { color: var(--text-dim); font-size: 12px; margin-left: auto; }
+
   .banner {
     position: fixed; inset: 0; z-index: 999;
     display: none; align-items: center; justify-content: center; flex-direction: column;
@@ -142,6 +156,11 @@
     </div>
     <button id="toggleBtn" class="toggle-btn checkin">INIZIA TURNO (CHECK-IN)</button>
     <p class="hint">Fai check-in solo quando sei effettivamente in servizio: da questo momento riceverai le allerte del comandante, anche ad app chiusa. Fai check-out a fine turno.</p>
+
+    <div id="onDutyPanel" class="on-duty-panel" style="display:none;">
+      <h2>In servizio con te</h2>
+      <div id="onDutyList"><div class="on-duty-empty">Caricamento…</div></div>
+    </div>
   </div>
 </div>
 
@@ -226,6 +245,29 @@ function renderStatus() {
     : 'FUORI SERVIZIO <strong>' + memberName + '</strong>';
   $('toggleBtn').textContent = checkedIn ? 'TERMINA TURNO (CHECK-OUT)' : 'INIZIA TURNO (CHECK-IN)';
   $('toggleBtn').className = 'toggle-btn ' + (checkedIn ? 'checkout' : 'checkin');
+
+  $('onDutyPanel').style.display = checkedIn ? 'block' : 'none';
+  if (checkedIn) loadOnDutyList();
+}
+
+async function loadOnDutyList() {
+  try {
+    const res = await fetch('/api/crew/status');
+    const data = await res.json();
+    const onDuty = data.members.filter(m => m.checkedIn);
+    const list = $('onDutyList');
+    if (!onDuty.length) {
+      list.innerHTML = '<div class="on-duty-empty">Nessuno al momento</div>';
+      return;
+    }
+    list.innerHTML = onDuty.map(m => `
+      <div class="on-duty-row">
+        <span class="dot"></span>
+        <span>${m.name}</span>
+        ${m.memberId === memberId ? '<span class="on-duty-you">(tu)</span>' : ''}
+      </div>
+    `).join('');
+  } catch (e) { /* riprova al prossimo giro */ }
 }
 
 function goToStatusCard() {
@@ -444,7 +486,10 @@ if ('serviceWorker' in navigator) {
 let pollTimer = null;
 function startPolling() {
   if (pollTimer) return;
-  pollTimer = setInterval(checkLatestAlert, 15000);
+  pollTimer = setInterval(() => {
+    checkLatestAlert();
+    if (checkedIn) loadOnDutyList();
+  }, 15000);
 }
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
