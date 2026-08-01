@@ -49,6 +49,7 @@
     margin-top: 12px; width: 100%; padding: 14px; font-size: 15px; font-weight: 600;
     border-radius: 10px; border: none; background: #2563eb; color: white; cursor: pointer;
   }
+  #codeInput { text-align: center; font-size: 28px; letter-spacing: 0.3em; }
 
   .status-card {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -108,9 +109,27 @@
   </header>
 
   <div id="setup" class="setup">
-    <label for="nameInput">Nome / nominativo</label>
-    <input id="nameInput" type="text" placeholder="Es. Mario Rossi" autocomplete="off">
-    <button id="saveNameBtn">Registrati su questo telefono</button>
+    <div id="setupChoice">
+      <p style="margin:0 0 14px; font-size:14px; color:var(--text-dim);">Prima di iniziare, dicci chi sei:</p>
+      <button id="newUserBtn">Sono nuovo/a in equipaggio</button>
+      <button id="existingUserBtn" style="background:#1e3a54; margin-top:10px;">Ho già un codice personale</button>
+    </div>
+
+    <div id="newUserForm" style="display:none;">
+      <label for="nameInput">Nome / nominativo</label>
+      <input id="nameInput" type="text" placeholder="Es. Mario Rossi" autocomplete="off">
+      <label for="codeInputNew" style="margin-top:14px;">Il tuo codice a 4 cifre</label>
+      <input id="codeInputNew" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Es. 1503" autocomplete="off">
+      <button id="saveNameBtn">Registrami</button>
+      <button id="backFromNewBtn" style="background:transparent; color:var(--text-dim); margin-top:6px;">Indietro</button>
+    </div>
+
+    <div id="existingUserForm" style="display:none;">
+      <label for="codeInputExisting">Il tuo codice a 4 cifre</label>
+      <input id="codeInputExisting" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Es. 1503" autocomplete="off">
+      <button id="loginCodeBtn">Accedi</button>
+      <button id="backFromExistingBtn" style="background:transparent; color:var(--text-dim); margin-top:6px;">Indietro</button>
+    </div>
   </div>
 
   <div id="statusCard" class="status-card" style="display:none;">
@@ -138,14 +157,8 @@ const $ = (id) => document.getElementById(id);
 
 let memberId = localStorage.getItem('memberId');
 let memberName = localStorage.getItem('memberName');
+let memberCode = localStorage.getItem('memberCode');
 let checkedIn = localStorage.getItem('checkedIn') === 'true';
-
-function uuid() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-    const r = Math.random() * 16 | 0;
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-  });
-}
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -182,7 +195,7 @@ async function registerServiceWorkerAndSubscribe() {
   await fetch('/api/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, name: memberName, subscription })
+    body: JSON.stringify({ memberId, subscription })
   });
 
   $('permBadge').textContent = 'Notifiche attive ✓';
@@ -197,26 +210,97 @@ function renderStatus() {
   $('toggleBtn').className = 'toggle-btn ' + (checkedIn ? 'checkout' : 'checkin');
 }
 
+function goToStatusCard() {
+  $('setup').style.display = 'none';
+  $('statusCard').style.display = 'flex';
+  renderStatus();
+}
+
 async function init() {
   if (memberId && memberName) {
-    $('setup').style.display = 'none';
-    $('statusCard').style.display = 'flex';
-    renderStatus();
+    goToStatusCard();
     await registerServiceWorkerAndSubscribe();
   }
 }
 
+// --- Schermata di scelta iniziale ---
+$('newUserBtn').addEventListener('click', () => {
+  $('setupChoice').style.display = 'none';
+  $('newUserForm').style.display = 'block';
+});
+$('existingUserBtn').addEventListener('click', () => {
+  $('setupChoice').style.display = 'none';
+  $('existingUserForm').style.display = 'block';
+});
+$('backFromNewBtn').addEventListener('click', () => {
+  $('newUserForm').style.display = 'none';
+  $('setupChoice').style.display = 'block';
+});
+$('backFromExistingBtn').addEventListener('click', () => {
+  $('existingUserForm').style.display = 'none';
+  $('setupChoice').style.display = 'block';
+});
+
+// --- Nuovo membro: crea l'account con il codice a 4 cifre concordato ---
 $('saveNameBtn').addEventListener('click', async () => {
   const name = $('nameInput').value.trim();
-  if (!name) return;
-  memberId = memberId || uuid();
-  memberName = name;
-  localStorage.setItem('memberId', memberId);
-  localStorage.setItem('memberName', memberName);
-  $('setup').style.display = 'none';
-  $('statusCard').style.display = 'flex';
-  renderStatus();
-  await registerServiceWorkerAndSubscribe();
+  const code = $('codeInputNew').value.trim();
+  if (!name) { alert('Inserisci il tuo nome.'); return; }
+  if (!/^\d{4}$/.test(code)) { alert('Inserisci le 4 cifre del tuo codice.'); return; }
+
+  $('saveNameBtn').disabled = true;
+  try {
+    const res = await fetch('/api/member/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, code })
+    });
+    const data = await res.json();
+    if (!data.ok) { alert(data.error || 'Errore, riprova.'); $('saveNameBtn').disabled = false; return; }
+
+    memberId = data.memberId;
+    memberName = data.name;
+    memberCode = data.code;
+    localStorage.setItem('memberId', memberId);
+    localStorage.setItem('memberName', memberName);
+    localStorage.setItem('memberCode', memberCode);
+
+    goToStatusCard();
+    await registerServiceWorkerAndSubscribe();
+  } catch (e) {
+    alert('Errore di connessione. Riprova.');
+  }
+  $('saveNameBtn').disabled = false;
+});
+
+// --- Membro esistente: accede da un nuovo telefono con il proprio codice a 4 cifre ---
+$('loginCodeBtn').addEventListener('click', async () => {
+  const code = $('codeInputExisting').value.trim();
+  if (!/^\d{4}$/.test(code)) { alert('Inserisci le 4 cifre del tuo codice.'); return; }
+
+  $('loginCodeBtn').disabled = true;
+  try {
+    const res = await fetch('/api/member/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json();
+    if (!data.ok) { alert(data.error || 'Codice non trovato.'); $('loginCodeBtn').disabled = false; return; }
+
+    memberId = data.memberId;
+    memberName = data.name;
+    memberCode = data.code;
+    localStorage.setItem('memberId', memberId);
+    localStorage.setItem('memberName', memberName);
+    localStorage.setItem('memberCode', memberCode);
+
+    goToStatusCard();
+    await registerServiceWorkerAndSubscribe();
+  } catch (e) {
+    alert('Errore di connessione. Riprova.');
+  }
+  $('loginCodeBtn').disabled = false;
 });
 
 $('toggleBtn').addEventListener('click', async () => {
