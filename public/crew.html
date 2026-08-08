@@ -91,16 +91,25 @@
   .banner {
     position: fixed; inset: 0; z-index: 999;
     display: none; align-items: center; justify-content: center; flex-direction: column;
-    gap: 16px; text-align: center; padding: 30px;
+    gap: 10px; text-align: center; padding: 30px;
   }
   .banner.intervento { background: var(--red); }
   .banner.preallerta { background: var(--amber); }
   .banner.show { display: flex; animation: flash 0.6s infinite; }
   @keyframes flash { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.4); } }
-  .banner h2 { font-size: 30px; margin: 0; color: #fff; }
-  .banner p { font-size: 16px; color: #fff; margin: 0; }
+  .banner h2 {
+    font-size: clamp(52px, 17vw, 96px);
+    font-weight: 900;
+    line-height: 0.95;
+    letter-spacing: 0.01em;
+    margin: 0;
+    color: #fff;
+    text-transform: uppercase;
+    text-shadow: 0 6px 28px rgba(0,0,0,0.28);
+  }
+  .banner p { font-size: 15px; color: #fff; opacity: 0.88; margin: 4px 0 0; }
   .banner button {
-    margin-top: 20px; padding: 14px 28px; border-radius: 10px; border: none;
+    margin-top: 26px; padding: 14px 28px; border-radius: 10px; border: none;
     background: rgba(0,0,0,0.35); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
   }
   .ack-btn {
@@ -431,7 +440,7 @@ function playAlarm(urgency) {
 function showBanner(data, playSound) {
   currentAlertId = data.alertId;
   lastKnownAlertId = data.alertId;
-  $('bannerTitle').textContent = data.title;
+  $('bannerTitle').textContent = data.title.replace(/[^\p{L}\p{N}\s-]/gu, '').trim();
   $('bannerBody').textContent = data.body;
   const banner = $('banner');
   banner.className = 'banner show ' + (data.urgency === 'intervento' ? 'intervento' : 'preallerta');
