@@ -360,7 +360,3 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Server avviato sulla porta ${PORT}`);
 });
-
-app.listen(PORT, () => {
-  console.log(`Server avviato sulla porta ${PORT}`);
-});
