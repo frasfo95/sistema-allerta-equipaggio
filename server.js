@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
 const webpush = require('web-push');
+const admin = require('firebase-admin');
 const mongoose = require('mongoose');
 const path = require('path');
 
@@ -35,7 +36,8 @@ const memberSchema = new mongoose.Schema({
   memberId: { type: String, unique: true, required: true },
   name: { type: String, required: true },
   code: { type: String, unique: true, required: true }, // codice personale a 4 cifre
-  subscription: { type: Object, default: null },
+  subscription: { type: Object, default: null }, // notifiche push da browser/PWA (usate su iPhone e Android via sito)
+  fcmToken: { type: String, default: null },      // notifiche native Android (app vera, tramite Firebase)
   checkedIn: { type: Boolean, default: false },
   lastUpdate: { type: Date, default: Date.now }
 });
@@ -62,6 +64,24 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
   process.exit(1);
 }
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+
+// --- Configurazione Firebase (per le notifiche dell'app Android nativa) ---
+// Facoltativa: se non ancora configurata, il sistema continua a funzionare normalmente
+// per il sito/PWA (comandante e pagina equipaggio via browser, su iPhone e Android);
+// semplicemente l'app nativa Android non riceverà notifiche finché non si imposta questa variabile.
+let firebaseMessaging = null;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    firebaseMessaging = admin.messaging();
+    console.log('Firebase Cloud Messaging attivo (app Android nativa abilitata)');
+  } catch (e) {
+    console.error('⚠️  FIREBASE_SERVICE_ACCOUNT presente ma non valida:', e.message);
+  }
+} else {
+  console.log('Firebase non configurato: le notifiche dell\'app nativa Android sono disattivate per ora (il sito/PWA funziona regolarmente).');
+}
 
 // --- Middleware ---
 app.use(cors());
@@ -136,6 +156,21 @@ app.post('/api/register', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Collega (o aggiorna) il token dell'app Android nativa per un membro già esistente
+app.post('/api/register-fcm', asyncHandler(async (req, res) => {
+  const { memberId, fcmToken } = req.body;
+  if (!memberId || !fcmToken) {
+    return res.status(400).json({ error: 'memberId e fcmToken sono obbligatori' });
+  }
+  const member = await Member.findOneAndUpdate(
+    { memberId },
+    { fcmToken, lastUpdate: new Date() },
+    { new: true }
+  );
+  if (!member) return res.status(404).json({ error: 'Membro non trovato' });
+  res.json({ ok: true });
+}));
+
 app.post('/api/checkin', asyncHandler(async (req, res) => {
   const { memberId } = req.body;
   const member = await Member.findOneAndUpdate(
@@ -169,6 +204,84 @@ app.get('/api/crew/status', asyncHandler(async (req, res) => {
   });
 }));
 
+// Invia una "raffica" di notifiche (push da browser + Firebase) a un gruppo di membri,
+// tutte riferite allo stesso allarme (stesso alertId): usata sia per il primo invio
+// immediato sia per i richiami automatici successivi.
+async function deliverAlertPush(members, alertId, text, type) {
+  const payload = JSON.stringify({
+    alertId: alertId.toString(),
+    title: text.title,
+    body: text.body,
+    vibrate: text.vibrate,
+    urgency: type
+  });
+  const pushOptions = { urgency: type === 'intervento' ? 'high' : 'normal', TTL: 3600 };
+
+  const withWebPush = members.filter(m => m.subscription);
+  const webResults = await Promise.allSettled(
+    withWebPush.map(m =>
+      webpush.sendNotification(m.subscription, payload, pushOptions).catch(err => {
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          Member.updateOne({ memberId: m.memberId }, { subscription: null }).catch(() => {});
+        }
+        throw err;
+      })
+    )
+  );
+  const sent = webResults.filter(r => r.status === 'fulfilled').length;
+
+  let fcmSent = 0;
+  if (firebaseMessaging) {
+    const withFcm = members.filter(m => m.fcmToken);
+    const fcmResults = await Promise.allSettled(
+      withFcm.map(m =>
+        firebaseMessaging.send({
+          token: m.fcmToken,
+          android: { priority: 'high' },
+          data: { alertId: alertId.toString(), title: text.title, body: text.body, urgency: type }
+        }).catch(err => {
+          if (err.code === 'messaging/registration-token-not-registered') {
+            Member.updateOne({ memberId: m.memberId }, { fcmToken: null }).catch(() => {});
+          }
+          throw err;
+        })
+      )
+    );
+    fcmSent = fcmResults.filter(r => r.status === 'fulfilled').length;
+  }
+
+  return { sent, fcmSent, failed: webResults.length - sent };
+}
+
+// Dopo l'invio iniziale, ripete lo stesso allarme (stesso alertId, quindi conteggiato come
+// UN SOLO evento ai fini della conferma "Ho ricevuto") ogni 2 secondi, fino a un massimo di
+// 15 volte in totale — serve a rendere il suono più insistente e affidabile sul telefono di
+// chi lo riceve. Ad ogni giro, chi ha già confermato la ricezione smette di essere ricontattato.
+function scheduleRepeatedDelivery(alertId, text, type, initialRecipientIds) {
+  const MAX_ROUNDS = 15;
+  const INTERVAL_MS = 2000;
+  let round = 1; // il round 1 è già stato inviato prima di chiamare questa funzione
+
+  const timer = setInterval(async () => {
+    round++;
+    if (round > MAX_ROUNDS) { clearInterval(timer); return; }
+    try {
+      const alert = await Alert.findById(alertId).lean();
+      if (!alert) { clearInterval(timer); return; }
+      const ackedIds = new Set(alert.acked.map(a => a.memberId));
+      const stillWaiting = initialRecipientIds.filter(id => !ackedIds.has(id));
+      if (stillWaiting.length === 0) { clearInterval(timer); return; } // tutti hanno confermato: si ferma da sola
+
+      const freshMembers = await Member.find({ memberId: { $in: stillWaiting }, checkedIn: true }).lean();
+      if (freshMembers.length > 0) {
+        await deliverAlertPush(freshMembers, alertId, text, type);
+      }
+    } catch (e) {
+      console.error('Errore nel richiamo automatico dell\'allarme:', e.message);
+    }
+  }, INTERVAL_MS);
+}
+
 app.post('/api/alert', asyncHandler(async (req, res) => {
   const { type } = req.body;
   if (!['preallerta', 'intervento'].includes(type)) {
@@ -183,6 +296,8 @@ app.post('/api/alert', asyncHandler(async (req, res) => {
 
   const inServizio = await Member.find({ checkedIn: true }).lean();
 
+  // Un solo documento allarme: tutte le notifiche ripetute che seguono fanno riferimento
+  // a questo stesso alertId, quindi per il comandante resta un evento unico da confermare.
   const alert = await Alert.create({
     type,
     title: text.title,
@@ -194,30 +309,13 @@ app.post('/api/alert', asyncHandler(async (req, res) => {
     return res.json({ ok: true, alertId: alert._id, sent: 0, warning: 'Nessun membro in servizio (check-in) al momento.' });
   }
 
-  const payload = JSON.stringify({
-    alertId: alert._id.toString(),
-    title: text.title,
-    body: text.body,
-    vibrate: text.vibrate,
-    urgency: type
-  });
-  const pushOptions = { urgency: type === 'intervento' ? 'high' : 'normal', TTL: 3600 };
+  const { sent, fcmSent, failed } = await deliverAlertPush(inServizio, alert._id, text, type);
 
-  const results = await Promise.allSettled(
-    inServizio.map(m =>
-      webpush.sendNotification(m.subscription, payload, pushOptions).catch(err => {
-        if (err.statusCode === 404 || err.statusCode === 410) {
-          // La sottoscrizione non è più valida (es. app disinstallata): la rimuoviamo per non
-          // riprovare inutilmente ad ogni prossimo allarme, così l'invio resta rapido nel tempo.
-          Member.deleteOne({ memberId: m.memberId }).catch(() => {});
-        }
-        throw err;
-      })
-    )
-  );
+  // Da qui in avanti il primo invio è già partito: i richiami successivi proseguono in
+  // background, senza far attendere il comandante che ha già ricevuto conferma dell'invio.
+  scheduleRepeatedDelivery(alert._id, text, type, inServizio.map(m => m.memberId));
 
-  const sent = results.filter(r => r.status === 'fulfilled').length;
-  res.json({ ok: true, alertId: alert._id, sent, failed: results.length - sent, totalInServizio: inServizio.length });
+  res.json({ ok: true, alertId: alert._id, sent, fcmSent, failed, totalInServizio: inServizio.length });
 }));
 
 app.post('/api/alert/:id/ack', asyncHandler(async (req, res) => {
@@ -257,6 +355,10 @@ app.use('/api', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Errore non gestito:', err);
   res.status(500).json({ error: 'Errore interno del server. Riprova tra qualche istante.' });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server avviato sulla porta ${PORT}`);
 });
 
 app.listen(PORT, () => {
