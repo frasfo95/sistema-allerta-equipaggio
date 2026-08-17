@@ -392,6 +392,7 @@ function forgetDeviceAndShowLogin() {
 }
 
 $('toggleBtn').addEventListener('click', async () => {
+  warmUpAudio();
   const wasCheckedIn = checkedIn;
   const endpoint = checkedIn ? '/api/checkout' : '/api/checkin';
   const res = await fetch(endpoint, {
@@ -414,26 +415,59 @@ $('toggleBtn').addEventListener('click', async () => {
   }
 });
 
-// --- Allarme in primo piano: suono generato (nessun file audio necessario) + banner lampeggiante ---
+// --- Allarme in primo piano: sirena a due toni generata via Web Audio, pianificata
+// direttamente sul clock del motore audio (mai con setTimeout, che può risultare
+// a scatti se il browser mette in pausa il tab) ---
 let audioCtx;
 let currentAlertId = null;
 let lastKnownAlertId = null;
 
-function playAlarm(urgency) {
-  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-  const beeps = urgency === 'intervento' ? 6 : 3;
-  const gap = 350;
-  for (let i = 0; i < beeps; i++) {
-    setTimeout(() => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.frequency.value = urgency === 'intervento' ? 880 : 660;
-      osc.type = 'square';
-      gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.25);
-    }, i * gap);
+// "Sblocca" l'audio del browser il prima possibile, appena c'è una prima interazione
+// dell'utente: così quando arriva davvero un allarme il suono è già pronto a partire.
+function warmUpAudio() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  } catch (e) { /* non disponibile su questo browser */ }
+}
+document.addEventListener('click', warmUpAudio, { once: true });
+document.addEventListener('touchstart', warmUpAudio, { once: true });
+
+function scheduleTone(startTime, duration, freq) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.frequency.value = freq;
+  osc.type = 'square';
+  // breve dissolvenza in entrata/uscita: evita click secchi e rende il suono più pieno/udibile
+  gain.gain.setValueAtTime(0.0001, startTime);
+  gain.gain.exponentialRampToValueAtTime(0.5, startTime + 0.02);
+  gain.gain.setValueAtTime(0.5, startTime + duration - 0.03);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.02);
+}
+
+async function playAlarm(urgency) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+  } catch (e) {
+    return; // il browser blocca l'audio senza interazione dell'utente: si ritenterà al prossimo giro
+  }
+
+  const isIntervento = urgency === 'intervento';
+  const freqA = isIntervento ? 920 : 720;
+  const freqB = isIntervento ? 660 : 520;
+  const toneLen = isIntervento ? 0.30 : 0.32;
+  const gap = isIntervento ? 0.08 : 0.10;
+  const rounds = isIntervento ? 3 : 2; // "nee-naw" ripetuto: più insistente per INTERVENTO
+
+  const now = audioCtx.currentTime + 0.03;
+  for (let i = 0; i < rounds; i++) {
+    const t0 = now + i * (toneLen * 2 + gap);
+    scheduleTone(t0, toneLen, freqA);
+    scheduleTone(t0 + toneLen, toneLen, freqB);
   }
 }
 
@@ -444,7 +478,7 @@ function showBanner(data, playSound) {
   $('bannerBody').textContent = data.body;
   const banner = $('banner');
   banner.className = 'banner show ' + (data.urgency === 'intervento' ? 'intervento' : 'preallerta');
-  if (playSound) playAlarm(data.urgency);
+  if (playSound) playAlarm(data.urgency); // ogni volta che il banner appare, riparte sempre anche il suono
 }
 
 async function ackCurrentAlert() {
