@@ -49,7 +49,8 @@ const alertSchema = new mongoose.Schema({
   body: String,
   createdAt: { type: Date, default: Date.now },
   recipients: [{ memberId: String, name: String }],
-  acked: [{ memberId: String, name: String, at: { type: Date, default: Date.now } }]
+  acked: [{ memberId: String, name: String, at: { type: Date, default: Date.now } }],
+  seen: [{ memberId: String, at: { type: Date, default: Date.now } }] // ha aperto la schermata, ma non ha ancora premuto "Ho ricevuto"
 });
 alertSchema.index({ createdAt: -1 }); // le query "ultimo allarme" restano veloci anche con uno storico lungo
 const Alert = mongoose.model('Alert', alertSchema);
@@ -268,9 +269,12 @@ function scheduleRepeatedDelivery(alertId, text, type, initialRecipientIds) {
     try {
       const alert = await Alert.findById(alertId).lean();
       if (!alert) { clearInterval(timer); return; }
-      const ackedIds = new Set(alert.acked.map(a => a.memberId));
-      const stillWaiting = initialRecipientIds.filter(id => !ackedIds.has(id));
-      if (stillWaiting.length === 0) { clearInterval(timer); return; } // tutti hanno confermato: si ferma da sola
+      const doneIds = new Set([
+        ...alert.acked.map(a => a.memberId),
+        ...alert.seen.map(s => s.memberId)
+      ]);
+      const stillWaiting = initialRecipientIds.filter(id => !doneIds.has(id));
+      if (stillWaiting.length === 0) { clearInterval(timer); return; } // tutti hanno visto o confermato: si ferma da sola
 
       const freshMembers = await Member.find({ memberId: { $in: stillWaiting }, checkedIn: true }).lean();
       if (freshMembers.length > 0) {
@@ -328,6 +332,24 @@ app.post('/api/alert/:id/ack', asyncHandler(async (req, res) => {
 
   if (!alert.acked.some(a => a.memberId === memberId)) {
     alert.acked.push({ memberId, name: name || memberId, at: new Date() });
+    await alert.save();
+  }
+  res.json({ ok: true });
+}));
+
+// Segnala che il membro ha aperto la schermata dell'allarme: basta questo a fermare i richiami
+// automatici (la raffica ogni 2 secondi), anche prima che prema "Ho ricevuto". Non conta come
+// conferma di ricezione per il comandante: quella resta legata solo all'endpoint /ack qui sopra.
+app.post('/api/alert/:id/seen', asyncHandler(async (req, res) => {
+  if (!isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Allarme non valido' });
+  const { memberId } = req.body;
+  if (!memberId) return res.status(400).json({ error: 'memberId obbligatorio' });
+
+  const alert = await Alert.findById(req.params.id);
+  if (!alert) return res.status(404).json({ error: 'Allarme non trovato' });
+
+  if (!alert.seen.some(s => s.memberId === memberId)) {
+    alert.seen.push({ memberId, at: new Date() });
     await alert.save();
   }
   res.json({ ok: true });
