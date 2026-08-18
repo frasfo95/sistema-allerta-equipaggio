@@ -421,6 +421,7 @@ $('toggleBtn').addEventListener('click', async () => {
 let audioCtx;
 let currentAlertId = null;
 let lastKnownAlertId = null;
+let lastSeenMarkedAlertId = null;
 
 // "Sblocca" l'audio del browser il prima possibile, appena c'è una prima interazione
 // dell'utente: così quando arriva davvero un allarme il suono è già pronto a partire.
@@ -433,42 +434,70 @@ function warmUpAudio() {
 document.addEventListener('click', warmUpAudio, { once: true });
 document.addEventListener('touchstart', warmUpAudio, { once: true });
 
-function scheduleTone(startTime, duration, freq) {
+function scheduleTone(startTime, duration, freq, onEnded) {
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.frequency.value = freq;
   osc.type = 'square';
   // breve dissolvenza in entrata/uscita: evita click secchi e rende il suono più pieno/udibile
   gain.gain.setValueAtTime(0.0001, startTime);
-  gain.gain.exponentialRampToValueAtTime(0.5, startTime + 0.02);
-  gain.gain.setValueAtTime(0.5, startTime + duration - 0.03);
+  gain.gain.exponentialRampToValueAtTime(0.45, startTime + 0.02);
+  gain.gain.setValueAtTime(0.45, startTime + duration - 0.03);
   gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
   osc.connect(gain).connect(audioCtx.destination);
   osc.start(startTime);
   osc.stop(startTime + duration + 0.02);
+  if (onEnded) osc.onended = onEnded;
 }
 
-async function playAlarm(urgency) {
+// Sirena "a catena": ogni tono programma il successivo solo quando il precedente è
+// davvero terminato (evento onended dell'oscillatore, non un timer esterno). Così i toni
+// non si sovrappongono mai fra loro, anche se nel frattempo arrivano altre notifiche
+// della stessa raffica — è proprio la sovrapposizione la causa del suono "a scatti/a metà".
+let alarmLoopActive = false;
+let alarmLoopAlertId = null;
+
+function alarmStep(alertId, urgency, toneIndex) {
+  if (!alarmLoopActive || alarmLoopAlertId !== alertId) return; // fermata (ack/chiusura/nuovo allarme)
+  const isIntervento = urgency === 'intervento';
+  const freqA = isIntervento ? 920 : 720;
+  const freqB = isIntervento ? 660 : 520;
+  const toneLen = isIntervento ? 0.30 : 0.34;
+  const freq = (toneIndex % 2 === 0) ? freqA : freqB;
+  const startTime = audioCtx.currentTime + 0.01;
+  scheduleTone(startTime, toneLen, freq, () => alarmStep(alertId, urgency, toneIndex + 1));
+}
+
+async function startAlarmLoop(alertId, urgency) {
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
   } catch (e) {
     return; // il browser blocca l'audio senza interazione dell'utente: si ritenterà al prossimo giro
   }
+  // Se la sirena per questo stesso allarme è già in corso, non se ne avvia una seconda sopra:
+  // è esattamente questo che causava il suono spezzato quando arrivavano notifiche ravvicinate.
+  if (alarmLoopActive && alarmLoopAlertId === alertId) return;
+  alarmLoopActive = true;
+  alarmLoopAlertId = alertId;
+  alarmStep(alertId, urgency, 0);
+}
 
-  const isIntervento = urgency === 'intervento';
-  const freqA = isIntervento ? 920 : 720;
-  const freqB = isIntervento ? 660 : 520;
-  const toneLen = isIntervento ? 0.30 : 0.32;
-  const gap = isIntervento ? 0.08 : 0.10;
-  const rounds = isIntervento ? 3 : 2; // "nee-naw" ripetuto: più insistente per INTERVENTO
+function stopAlarmLoop() {
+  alarmLoopActive = false;
+  alarmLoopAlertId = null;
+}
 
-  const now = audioCtx.currentTime + 0.03;
-  for (let i = 0; i < rounds; i++) {
-    const t0 = now + i * (toneLen * 2 + gap);
-    scheduleTone(t0, toneLen, freqA);
-    scheduleTone(t0 + toneLen, toneLen, freqB);
-  }
+// Segnala al server che questo membro ha aperto la schermata: basta questo a fermare i
+// richiami automatici della raffica (non equivale ancora a "Ho ricevuto" per il comandante).
+function markSeen(alertId) {
+  if (lastSeenMarkedAlertId === alertId) return; // già segnalato per questo allarme
+  lastSeenMarkedAlertId = alertId;
+  fetch(`/api/alert/${alertId}/seen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId })
+  }).catch(() => { lastSeenMarkedAlertId = null; }); // se fallisce, si ritenterà al prossimo showBanner
 }
 
 function showBanner(data, playSound) {
@@ -478,11 +507,13 @@ function showBanner(data, playSound) {
   $('bannerBody').textContent = data.body;
   const banner = $('banner');
   banner.className = 'banner show ' + (data.urgency === 'intervento' ? 'intervento' : 'preallerta');
-  if (playSound) playAlarm(data.urgency); // ogni volta che il banner appare, riparte sempre anche il suono
+  markSeen(data.alertId);
+  if (playSound) startAlarmLoop(data.alertId, data.urgency);
 }
 
 async function ackCurrentAlert() {
   if (!currentAlertId) return;
+  stopAlarmLoop();
   try {
     await fetch(`/api/alert/${currentAlertId}/ack`, {
       method: 'POST',
@@ -495,6 +526,7 @@ async function ackCurrentAlert() {
 
 $('ackBtn').addEventListener('click', ackCurrentAlert);
 $('dismissBtn').addEventListener('click', () => {
+  stopAlarmLoop();
   $('banner').className = 'banner'; // chiude senza confermare: ricomparirà alla riapertura se ancora non confermato
 });
 
