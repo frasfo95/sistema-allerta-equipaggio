@@ -98,14 +98,12 @@
   .banner.show { display: flex; animation: flash 0.6s infinite; }
   @keyframes flash { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.4); } }
   .banner h2 {
-    font-size: clamp(52px, 17vw, 96px);
-    font-weight: 900;
-    line-height: 0.95;
-    letter-spacing: 0.01em;
+    font-size: clamp(26px, 9vw, 34px);
+    font-weight: 700;
+    line-height: 1.15;
     margin: 0;
     color: #fff;
-    text-transform: uppercase;
-    text-shadow: 0 6px 28px rgba(0,0,0,0.28);
+    word-break: break-word;
   }
   .banner p { font-size: 15px; color: #fff; opacity: 0.88; margin: 4px 0 0; }
   .banner button {
@@ -571,6 +569,7 @@ function stopPolling() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
+    warmUpAudio(); // se il ritorno in primo piano viene da un tocco sulla notifica, a volte basta a sbloccare l'audio
     checkLatestAlert();
     startPolling();
   } else {
