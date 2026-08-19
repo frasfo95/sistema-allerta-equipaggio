@@ -72,7 +72,7 @@ self.addEventListener('push', (event) => {
     requireInteraction: true, // resta visibile finché non viene toccata
     silent: false, // usa il suono di notifica di sistema
     data: { urgency: data.urgency, timestamp: Date.now() },
-    icon: isIntervento ? '/icon-intervento.png' : '/icon-preallerta.png',
+    icon: isIntervento ? '/icon-intervento-v2.png' : '/icon-preallerta-v2.png',
     badge: '/icon-badge.png'
   };
 
